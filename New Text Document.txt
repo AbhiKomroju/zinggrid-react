@@ -1,0 +1,803 @@
+import React, { useEffect, useCallback, useContext, useReducer } from "react";
+import { useHistory } from "react-router-dom";
+import { KdsButton, KdsLoadingSpinner } from "react-mx-web-components";
+import { itemToDoRepo } from "../repositories/itemToDo";
+import { ReAssign } from "../components/ItemToDo/ReAssign";
+import { CopyImf } from "../components/ItemToDo/CopyImf";
+import { TableData } from "../components/ItemToDo/TableData";
+import { Search } from "../components/ItemToDo/Search";
+import { ADJUST_COLUMNS_ROUTE, REJECT_IMF } from "../constants";
+import { Toast } from "../components/Toast/Toast";
+import { AppContext } from "../state-management/providers/AppProvider";
+import { getLocalStorageValue, removeLocalStorageValue } from "../utils/auth";
+import { SearchField } from "../types/dashboard/appProvider.types";
+import {
+  SEARCH_CRITERIA,
+  FAILURE,
+  SUCCESS,
+  IMF_SUCCESS,
+} from "../constants/itemTodoConstants";
+import { homePageReducer, initialState } from "../reducers/homePageReducer";
+import { HomePageAction } from "../types/dashboard/homePage.types";
+
+export const HomePage = function HomePage(): JSX.Element {
+  const [state, dispatch] = useReducer(homePageReducer, initialState);
+  const history = useHistory();
+  const {
+    reload,
+    homeScreenSearchFields,
+    updateReload,
+    updateSelectedImfIds,
+    updateHomeScreenSearchFields,
+  } = useContext(AppContext);
+
+  const handleButtonClick = async () => {
+    // alert('Yet to be developed.')
+  };
+
+  const handleRejectBtn = () => {
+    history.push(REJECT_IMF);
+  };
+
+  const handleAdjustColumnsBtn = () => {
+    history.push(ADJUST_COLUMNS_ROUTE);
+  };
+
+  const receiveSelectedRows = (items: any) => {
+    dispatch({ type: "SET_SELECTED_ROWS", payload: items });
+    updateSelectedImfIds(items.map((req: { imf_id: number }) => req.imf_id));
+  };
+
+  const getButtons = useCallback(async () => {
+    const response = await itemToDoRepo().fetchButtons();
+    if (response) {
+      const filteredButtons = response?.filter(
+        (item: any) => item.displayStatus === "Yes"
+      );
+      if (filteredButtons?.length > 4) {
+        const index = { buttonName: "pipe", displayStatus: "Yes" };
+        filteredButtons.splice(4, 0, index);
+      }
+      dispatch({ type: "SET_BUTTONS", payload: filteredButtons });
+    }
+  }, []);
+
+  const deleteFields = (index: number) => {
+    dispatch({ type: "DELETE_SEARCH_FIELD", payload: index });
+    homeScreenSearchFields.splice(index, 1);
+    updateHomeScreenSearchFields([...homeScreenSearchFields]);
+  };
+
+  const setItemValue = (index: number, itemValue: any, type: string) => {
+    dispatch({
+      type: "UPDATE_SEARCH_FIELD",
+      payload: { index, value: itemValue, type },
+    });
+    const data = homeScreenSearchFields;
+    data.forEach((item: SearchField, itemIndex) => {
+      if (index === itemIndex) {
+        if (type === "single") {
+          item.criteriaValue = itemValue;
+        } else {
+          item.value = itemValue;
+        }
+      }
+    });
+    updateHomeScreenSearchFields(data);
+  };
+
+  const resetValues = (index: number) => {
+    const data = homeScreenSearchFields;
+    data.forEach((item: SearchField, itemIndex: number) => {
+      if (index === itemIndex) {
+        item.showTextOrDropDown = item.typeOfField;
+        item.dropDownValue = item.originalDropDownValue;
+        item.value = item.showTextOrDropDown === "DROP DOWN" ? [] : "";
+      }
+    });
+    updateHomeScreenSearchFields([...data]);
+  };
+
+  const resetAll = () => {
+    removeLocalStorageValue("itemSearchFields");
+    dispatch({ type: "RESET_SEARCH_FIELDS" });
+    const data = homeScreenSearchFields;
+    data.forEach((item: SearchField) => {
+      if (item.typeOfField === "DROP DOWN") {
+        item.value = [];
+        item.showTextOrDropDown = item.typeOfField;
+        item.dropDownValue = item.originalDropDownValue;
+      } else {
+        item.value = "";
+        item.showTextOrDropDown = item.typeOfField;
+      }
+    });
+    updateHomeScreenSearchFields([...data]);
+  };
+
+  const getSearchFields = useCallback(async () => {
+    const response = await itemToDoRepo().fetchSearchFields("IMF");
+    if (response) {
+      dispatch({
+        type: "SET_RESPONSIBILITY",
+        payload: {
+          responsibilityFlag: false,
+          checkBoxFlag: response.checkBoxDisplayed,
+        },
+      });
+      updateHomeScreenSearchFields(
+        response.searchFields?.map((item: any) => ({
+          ...item,
+          value: "",
+          criteriaValue: item.dropDownBox[0]?.value,
+          typeOfField: item.showTextOrDropDown,
+          originalDropDownValue: item.dropDownValue,
+        }))
+      );
+    }
+  }, [homeScreenSearchFields, updateHomeScreenSearchFields]);
+
+  const checkIfAllEmpty = (items: any[]) => {
+    return items.every((obj: { searchFilterValue: any }) => {
+      const value = obj.searchFilterValue;
+      return value === "" || (Array.isArray(value) && value.length === 0);
+    })
+      ? []
+      : items;
+  };
+
+  const getFinalList = (data: any) => {
+    const mappedData = data.map((item: any) => ({
+      fieldId: item.fieldId,
+      conditionalField: item.criteriaValue,
+      searchFilterValue:
+        item.showTextOrDropDown === "DROP DOWN" && item.value.length > 0
+          ? item.value.join()
+          : item.value,
+    }));
+    const list = checkIfAllEmpty(mappedData);
+    return list.filter((field) => field.searchFilterValue.length > 0);
+  };
+
+  const setResponsibilityField = (value: boolean) => {
+    dispatch({ type: "SET_RESPONSIBILITY_FLAG", payload: value });
+  };
+
+  const getImfData = useCallback((request: any) => {
+    setTimeout(async () => {
+      try {
+        const parsedPreviewList: any = getLocalStorageValue("previewList");
+        const itemSearchFields: any = getLocalStorageValue("itemSearchFields");
+        if (request.apiIdentifier === "home") {
+          delete request.searchFieldInput;
+          delete request.responsibilityFlag;
+          delete request.selectedFieldList;
+          if (
+            parsedPreviewList &&
+            parsedPreviewList?.selectedFieldList?.length > 0
+          ) {
+            request.apiIdentifier = "item-adjust";
+            const list = parsedPreviewList?.selectedFieldList;
+            request.selectedFieldList = list.map((data: { fldId: any }) => {
+              return { fieldId: data.fldId };
+            });
+          }
+          if (itemSearchFields?.searchFieldInput?.length > 0) {
+            request.apiIdentifier = "search";
+            request.searchFieldInput = itemSearchFields.searchFieldInput;
+          }
+        } else if (request.apiIdentifier === "search") {
+          if (
+            parsedPreviewList &&
+            parsedPreviewList?.selectedFieldList?.length > 0
+          ) {
+            const list = parsedPreviewList?.selectedFieldList;
+            request.selectedFieldList = list.map((data: { fldId: any }) => {
+              return { fieldId: data.fldId };
+            });
+            if (itemSearchFields?.searchFieldInput?.length > 0) {
+              request.searchFieldInput = itemSearchFields.searchFieldInput;
+            }
+          }
+        }
+        const response = await itemToDoRepo().fetchItemToDo(request);
+        if (response?.fields) {
+          dispatch({
+            type: "FETCH_IMF_DATA_SUCCESS",
+            payload: {
+              fields: response.fields,
+              toDoListRes: response.toDoListRes,
+              message:
+                response?.toDoListRes?.length >= 50000
+                  ? { message: SEARCH_CRITERIA, type: SUCCESS }
+                  : undefined,
+            },
+          });
+        }
+      } catch (error: any) {
+        dispatch({
+          type: "FETCH_IMF_DATA_ERROR",
+          payload: { message: error.message },
+        });
+      }
+    }, 1000);
+  }, []);
+
+  const searchResults = () => {
+    dispatch({
+      type: "SEARCH_RESULTS_START",
+      payload: {
+        finalRequest: state.finalRequest,
+        responsibilityFlag: state.responsibility.responsibilityFlag,
+        searchFieldInput: getFinalList(homeScreenSearchFields),
+      },
+    });
+
+    localStorage.setItem(
+      "itemSearchFields",
+      JSON.stringify({
+        ...state.finalRequest,
+        apiIdentifier: "search",
+        responsibilityFlag: state.responsibility.responsibilityFlag,
+        searchFieldInput: getFinalList(homeScreenSearchFields),
+      })
+    );
+
+    getImfData({
+      ...state.finalRequest,
+      apiIdentifier: "search",
+      responsibilityFlag: state.responsibility.responsibilityFlag,
+      searchFieldInput: getFinalList(homeScreenSearchFields),
+    });
+  };
+
+  const handleRefresh = () => {
+    updateReload(!reload);
+    dispatch({ type: "SET_LOADING", payload: { imfLoading: true } });
+    getImfData(state.finalRequest);
+  };
+
+  const copyImf = async (successMessage: string) => {
+    try {
+      dispatch({ type: "SET_COPY_LOAD", payload: { loading: true } });
+      const request = state.selectedRows.map(
+        (req: { imf_id: number }) => req.imf_id
+      );
+      const response = await itemToDoRepo().copyImf({ imfId: request });
+
+      if (response && response.copiedImf?.length > 0) {
+        dispatch({
+          type: "COPY_IMF_SUCCESS",
+          payload: { successMessage },
+        });
+      } else {
+        dispatch({
+          type: "COPY_IMF_ERROR",
+          payload: { errorMessage: successMessage },
+        });
+      }
+
+      setTimeout(() => {
+        handleRefresh();
+      }, 1000);
+    } catch (error: any) {
+      dispatch({
+        type: "COPY_IMF_ERROR",
+        payload: { errorMessage: error.message },
+      });
+    }
+  };
+
+  const getCommodities = async (reqsType = "commodities/0") => {
+    const response = await itemToDoRepo().fetchCommodities(reqsType);
+    if (response) {
+      if (reqsType === "category-managers") {
+        dispatch({
+          type: "SET_MANAGER_LIST",
+          payload: response.map((item: any) => ({
+            ...item,
+            mapId: item.cncId,
+          })),
+        });
+      } else {
+        dispatch({
+          type: "SET_REASSIGN_DATA",
+          payload: response.map((item: any) => ({
+            ...item,
+            mapId: item.cpt_com_cd,
+          })),
+        });
+      }
+    }
+  };
+
+  const showReassign = () => {
+    dispatch({ type: "SET_REASSIGN", payload: { show: true } });
+  };
+
+  const handleClearFilter = () => {
+    dispatch({ type: "SET_LOADING", payload: { imfLoading: true } });
+    resetAll();
+    const newFinalRequest = {
+      ...state.finalRequest,
+      apiIdentifier: "home",
+    };
+    dispatch({ type: "SET_FINAL_REQUEST", payload: newFinalRequest });
+    getImfData(newFinalRequest);
+  };
+
+  const refreshGrid = () => {
+    dispatch({ type: "REFRESH_GRID" });
+    setTimeout(() => {
+      handleRefresh();
+    }, 1000);
+  };
+
+  const handlePaste = (index: number, text: string) => {
+    dispatch({ type: "HANDLE_PASTE", payload: { index, text } });
+  };
+
+  useEffect(() => {
+    dispatch({ type: "SET_FINAL_REQUEST", payload: state.finalRequest });
+    getImfData(state.finalRequest);
+    getButtons();
+    if (homeScreenSearchFields.length === 0) {
+      getSearchFields();
+    }
+    getCommodities();
+    getCommodities("category-managers");
+  }, []);
+
+  return (
+    <div className="px-12 py-12 h-full grid grid-template-rows-auto-1fr overflow-hidden bg-color-f4f6f8">
+      <div className="gridArea">
+        <div>
+          <Toast message={state.message} />
+        </div>
+        <div className="buttons-container mb-8">
+          <h1
+            className="heading-l font-bold mb-8"
+            data-testid="home-page-title"
+          >
+            Items
+          </h1>
+          {state.reAssign.show && (
+            <ReAssign
+              reAssign={state.reAssign}
+              data={state.reAssignData}
+              managerData={state.managerList}
+              selectedIds={state.selectedRows}
+              setReAssign={(show) =>
+                dispatch({ type: "SET_REASSIGN", payload: { show } })
+              }
+              refreshGrid={refreshGrid}
+              getReAssignData={getCommodities}
+            />
+          )}
+          <div className="mb-16">
+            {state.buttons.map((button: any) => {
+              const type = button.buttonName;
+              switch (type) {
+                case "Re-Assign":
+                  return (
+                    <KdsButton
+                      kind="secondary"
+                      button-class="ml-8"
+                      id="modal-trigger-1"
+                      onClick={showReassign}
+                      disabled={state.selectedRows.length === 0}
+                      key={button.buttonName}
+                    >
+                      Re-Assign
+                    </KdsButton>
+                  );
+                case "pipe":
+                  return (
+                    <div className="inline ml-8" key={button.buttonName}>
+                      |
+                    </div>
+                  );
+                case "Copy IMF":
+                  return (
+                    <div className="inline" key={button.buttonName}>
+                      <CopyImf
+                        buttonName={button.buttonName}
+                        selectedRows={state.selectedRows}
+                        copyImf={copyImf}
+                        kind="secondary"
+                        heading="Copy IMF(s)"
+                        successMessage="Your IMF has been copied successfully."
+                        copyLoad={state.copyLoad}
+                      />
+                    </div>
+                  );
+                case "Search":
+                  return (
+                    <div className="inline" key={button.buttonName}>
+                      <Search
+                        buttonName={button.buttonName}
+                        responsibility={state.responsibility}
+                        fields={homeScreenSearchFields}
+                        deleteFields={deleteFields}
+                        setItemValue={setItemValue}
+                        resetValues={resetValues}
+                        resetAll={resetAll}
+                        searchResults={searchResults}
+                        setResponsibilityField={setResponsibilityField}
+                        handlePaste={handlePaste}
+                      />
+                    </div>
+                  );
+                case "Approve":
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleButtonClick}
+                      disabled={state.selectedRows.length === 0}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+                case "Reject":
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleRejectBtn}
+                      disabled={state.selectedRows.length === 0}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+                case "Refresh":
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleRefresh}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+                case "Adjust Columns":
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleAdjustColumnsBtn}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+                case "Clear Filter":
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleClearFilter}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+                default:
+                  return (
+                    <KdsButton
+                      button-class="ml-8"
+                      kind="secondary"
+                      onClick={handleButtonClick}
+                      key={button.buttonName}
+                    >
+                      {button.buttonName}
+                    </KdsButton>
+                  );
+              }
+            })}
+          </div>
+        </div>
+        {state.loading.imfLoading ? (
+          <div className="h-full w-full flex justify-center items-center heading-xl">
+            <KdsLoadingSpinner size="l" label="Loading" />
+          </div>
+        ) : (
+          <TableData
+            sendSelectedRows={receiveSelectedRows}
+            fields={state.fields}
+            data={state.imfData}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default HomePage;
+// Types
+interface HomePageState {
+  selectedRows: any[];
+  reAssignData: any[];
+  loading: {
+    imfLoading: boolean;
+  };
+  imfData: any[];
+  fields: any[];
+  buttons: any[];
+  responsibility: {
+    responsibilityFlag: boolean;
+    checkBoxFlag: boolean;
+  };
+  message: {
+    message: string;
+    type: string;
+  };
+  finalRequest: {
+    screenName: string;
+    apiIdentifier: string;
+    responsibilityFlag: boolean;
+    searchFieldInput: any[];
+    selectedFieldList: any[];
+  };
+  copyLoad: {
+    loading: boolean;
+  };
+  reAssign: {
+    show: boolean;
+  };
+  managerList: any[];
+}
+
+type HomePageAction =
+  | { type: "SET_SELECTED_ROWS"; payload: any[] }
+  | { type: "SET_REASSIGN_DATA"; payload: any[] }
+  | { type: "SET_LOADING"; payload: { imfLoading: boolean } }
+  | { type: "SET_IMF_DATA"; payload: any[] }
+  | { type: "SET_FIELDS"; payload: any[] }
+  | { type: "SET_BUTTONS"; payload: any[] }
+  | {
+      type: "SET_RESPONSIBILITY";
+      payload: { responsibilityFlag: boolean; checkBoxFlag: boolean };
+    }
+  | { type: "SET_MESSAGE"; payload: { message: string; type: string } }
+  | { type: "SET_FINAL_REQUEST"; payload: any }
+  | { type: "SET_COPY_LOAD"; payload: { loading: boolean } }
+  | { type: "SET_REASSIGN"; payload: { show: boolean } }
+  | { type: "SET_MANAGER_LIST"; payload: any[] }
+  | { type: "RESET_SEARCH_FIELDS" }
+  | {
+      type: "UPDATE_SEARCH_FIELD";
+      payload: { index: number; value: any; type: string };
+    }
+  | { type: "DELETE_SEARCH_FIELD"; payload: number }
+  | { type: "SET_RESPONSIBILITY_FLAG"; payload: boolean }
+  | { type: "REFRESH_GRID" }
+  | { type: "HANDLE_PASTE"; payload: { index: number; text: string } }
+  | {
+      type: "FETCH_IMF_DATA_SUCCESS";
+      payload: {
+        fields: any[];
+        toDoListRes: any[];
+        message?: { message: string; type: string };
+      };
+    }
+  | {
+      type: "FETCH_IMF_DATA_ERROR";
+      payload: { message: string };
+    }
+  | {
+      type: "COPY_IMF_SUCCESS";
+      payload: { successMessage: string };
+    }
+  | {
+      type: "COPY_IMF_ERROR";
+      payload: { errorMessage: string };
+    }
+  | {
+      type: "SEARCH_RESULTS_START";
+      payload: {
+        finalRequest: any;
+        responsibilityFlag: boolean;
+        searchFieldInput: any[];
+      };
+    };
+
+// Constants
+const SEARCH_CRITERIA = "Search criteria exceeded 50000 records";
+const FAILURE = "FAILURE";
+const SUCCESS = "SUCCESS";
+const IMF_SUCCESS = "IMF has been refreshed successfully";
+
+// Initial State
+const initialState: HomePageState = {
+  selectedRows: [],
+  reAssignData: [],
+  loading: {
+    imfLoading: true,
+  },
+  imfData: [],
+  fields: [],
+  buttons: [],
+  responsibility: {
+    responsibilityFlag: false,
+    checkBoxFlag: false,
+  },
+  message: { message: "", type: "" },
+  finalRequest: {
+    screenName: "IMF",
+    apiIdentifier: "home",
+    responsibilityFlag: false,
+    searchFieldInput: [],
+    selectedFieldList: [],
+  },
+  copyLoad: {
+    loading: false,
+  },
+  reAssign: { show: false },
+  managerList: [],
+};
+
+// Reducer
+export const homePageReducer = (
+  state: HomePageState,
+  action: HomePageAction
+): HomePageState => {
+  switch (action.type) {
+    case "SET_SELECTED_ROWS":
+      return { ...state, selectedRows: action.payload };
+
+    case "SET_REASSIGN_DATA":
+      return { ...state, reAssignData: action.payload };
+
+    case "SET_LOADING":
+      return { ...state, loading: action.payload };
+
+    case "SET_IMF_DATA":
+      return { ...state, imfData: action.payload };
+
+    case "SET_FIELDS":
+      return { ...state, fields: action.payload };
+
+    case "SET_BUTTONS":
+      return { ...state, buttons: action.payload };
+
+    case "SET_RESPONSIBILITY":
+      return { ...state, responsibility: action.payload };
+
+    case "SET_MESSAGE":
+      return { ...state, message: action.payload };
+
+    case "SET_FINAL_REQUEST":
+      return { ...state, finalRequest: action.payload };
+
+    case "SET_COPY_LOAD":
+      return { ...state, copyLoad: action.payload };
+
+    case "SET_REASSIGN":
+      return { ...state, reAssign: action.payload };
+
+    case "SET_MANAGER_LIST":
+      return { ...state, managerList: action.payload };
+
+    case "RESET_SEARCH_FIELDS":
+      return {
+        ...state,
+        finalRequest: {
+          ...state.finalRequest,
+          apiIdentifier: "home",
+        },
+      };
+
+    case "UPDATE_SEARCH_FIELD":
+      const { index, value, type } = action.payload;
+      const updatedFields = [...state.fields];
+      updatedFields.forEach((item, itemIndex) => {
+        if (index === itemIndex) {
+          if (type === "single") {
+            item.criteriaValue = value;
+          } else {
+            item.value = value;
+          }
+        }
+      });
+      return { ...state, fields: updatedFields };
+
+    case "DELETE_SEARCH_FIELD":
+      const newFields = [...state.fields];
+      newFields.splice(action.payload, 1);
+      return { ...state, fields: newFields };
+
+    case "SET_RESPONSIBILITY_FLAG":
+      return {
+        ...state,
+        responsibility: {
+          ...state.responsibility,
+          responsibilityFlag: action.payload,
+        },
+      };
+
+    case "REFRESH_GRID":
+      return {
+        ...state,
+        selectedRows: [],
+        loading: { imfLoading: true },
+        message: { message: "", type: "" },
+      };
+
+    case "HANDLE_PASTE":
+      const { index: pasteIndex, text } = action.payload;
+      const copiedNumbers = text
+        .split(/[\r\n,]+/)
+        .filter(Boolean)
+        .filter((each) => !Number.isNaN(Number(each)));
+
+      if (copiedNumbers.length > 0) {
+        const updatedFields = [...state.fields];
+        updatedFields.forEach((item, itemIndex) => {
+          if (pasteIndex === itemIndex) {
+            item.showTextOrDropDown = "DROP DOWN";
+            item.dropDownValue = copiedNumbers.map((number: string) => ({
+              label: number,
+              value: number,
+            }));
+            item.value = copiedNumbers;
+          }
+        });
+        return { ...state, fields: updatedFields };
+      }
+      return state;
+
+    case "FETCH_IMF_DATA_SUCCESS":
+      const { fields, toDoListRes, message } = action.payload;
+      return {
+        ...state,
+        loading: { imfLoading: false },
+        fields,
+        imfData: toDoListRes,
+        message: message || state.message,
+      };
+
+    case "FETCH_IMF_DATA_ERROR":
+      return {
+        ...state,
+        loading: { imfLoading: false },
+        message: { message: action.payload.message, type: FAILURE },
+      };
+
+    case "COPY_IMF_SUCCESS":
+      return {
+        ...state,
+        copyLoad: { loading: false },
+        message: { message: action.payload.successMessage, type: SUCCESS },
+      };
+
+    case "COPY_IMF_ERROR":
+      return {
+        ...state,
+        copyLoad: { loading: false },
+        message: { message: action.payload.errorMessage, type: FAILURE },
+      };
+
+    case "SEARCH_RESULTS_START":
+      const { finalRequest, responsibilityFlag, searchFieldInput } =
+        action.payload;
+      return {
+        ...state,
+        loading: { imfLoading: true },
+        finalRequest: {
+          ...finalRequest,
+          apiIdentifier: "search",
+          responsibilityFlag,
+          searchFieldInput,
+        },
+      };
+
+    default:
+      return state;
+  }
+};
+
+export { initialState };
